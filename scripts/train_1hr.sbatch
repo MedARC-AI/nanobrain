@@ -2,13 +2,15 @@
 #SBATCH --job-name=nanobrain
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=2:00:00
+#SBATCH --time=3:00:00
 #SBATCH --partition=n
 #SBATCH --account=training
 #SBATCH --output=slurms/slurm-%j.out
 #SBATCH --error=slurms/slurm-%j.err
 
 set -euo pipefail
+
+export BRAINMARKS_SMRI_DATA="${BRAINMARKS_SMRI_DATA:-data}"
 
 OUT_DIR="output"
 NAME="vits_1hr"
@@ -27,7 +29,13 @@ if [[ $status -ne 0 && $status -ne 124 ]]; then
     exit $status
 fi
 
-# run evals if successful, ~10 min
-uv run --no-sync python -m nanobrain.eval.run \
-    "${RUN_DIR}/checkpoint-last.pth" \
-    "${RUN_DIR}/eval"
+# run all brainmarks-smri evals, results in ${RUN_DIR}/eval/<task>.json
+TASKS=$(uv run --no-sync python -c "from brainmarks_smri.tasks import list_tasks; print(*list_tasks())")
+for task in ${TASKS}; do
+    uv run --no-sync python -m brainmarks_smri vit_mae_3d "${task}" \
+        --overrides \
+        "imports=[nanobrain.model]" \
+        model_kwargs.checkpoint="${RUN_DIR}/checkpoint-last.pth" \
+        output_dir="${RUN_DIR}" \
+        name=eval
+done
