@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "braceexpand",
+    "brainmarks-smri",
     "datasets",
     "einops",
     "flask",
@@ -62,6 +63,7 @@ python-preference = "only-system"
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
 synthseg = { git = "https://github.com/MedARC-AI/SynthSeg.git", rev = "2690d9ac9ae28323d03043406cd21db0a8741547" }
+brainmarks-smri = { path = "third_party/brainmarks-smri", editable = true }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

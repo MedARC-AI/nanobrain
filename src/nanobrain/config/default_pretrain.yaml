@@ -8,8 +8,8 @@ notes: null
 output_dir: output
 
 # Data.
-data_root: data/FOMO300K_images
-train_filelist: data/FOMO300K_images/filelist_subsampled.txt
+data_root: data/fomo300k
+train_filelist: src/nanobrain/config/fomo300k_images.txt
 num_workers: 8
 prefetch_factor: 2
 
@@ -18,10 +18,10 @@ prefetch_factor: 2
 grid_size: [192, 240, 192]
 patch_size: 8
 
-# Sequence sampling. ~6400 mask patches per image on average, so num_visible 1280 is a
+# Sequence sampling. ~3200 brain mask patches per image on average, so num_visible 640 is a
 # ~0.8 mask ratio.
-num_visible: 1280
-num_predict: 1280
+num_visible: 640
+num_predict: 640
 num_samples: 2
 
 # Model (ViT-S encoder).

@@ -1,14 +1,27 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from brainmarks_smri.models import EmbeddingOutput, ImageInput, register_model
 from einops import rearrange
 from torch import Tensor
 from jaxtyping import Float, Int
 
 from .modules import Block, LayerNorm, SeparablePosEmbed3D
+from .transforms import (
+    crop_to_mask,
+    fit_to_shape,
+    normalize_intensity,
+    reorient_to_ras,
+    resample_to_spacing,
+)
+
+TARGET_SPACING = 1.0
 
 
 class ViTMAE3D(nn.Module):
+    name = "vit_mae_3d"
+
     def __init__(
         self,
         grid_size: tuple[int, int, int] = (192, 240, 192),
@@ -27,7 +40,8 @@ class ViTMAE3D(nn.Module):
     ):
         super().__init__()
         self.grid_size = grid_size
-        self.patch_size = patch_size
+        # tuple for the brainmarks-smri model contract
+        self.patch_size = (patch_size, patch_size, patch_size)
         self.embed_dim = embed_dim
         self.class_tokens = class_tokens
         patch_grid_size = tuple(size // patch_size for size in grid_size)
@@ -157,8 +171,8 @@ class ViTMAE3D(nn.Module):
         B = images.shape[0]
         assert tuple(images.shape[1:]) == tuple(self.grid_size)
 
-        patches = patchify3d(images, self.patch_size)
-        mask_patches = patchify3d(mask, self.patch_size)
+        patches = patchify3d(images, self.patch_size[0])
+        mask_patches = patchify3d(mask, self.patch_size[0])
         coord = self.coord_grid.expand(B, -1, -1)
 
         # sample num_samples sequences per image, then flatten them into the batch
@@ -202,42 +216,71 @@ class ViTMAE3D(nn.Module):
         }
         return loss, state
 
-    def dense_embed(
-        self,
-        images: Float[Tensor, "B X Y Z"],
-        mask: Float[Tensor, "B X Y Z"],
-    ) -> Float[Tensor, "B Gx Gy Gz D"]:
-        B = images.shape[0]
-        assert tuple(images.shape[1:]) == tuple(self.grid_size)
-        patch_grid_size = [size // self.patch_size for size in self.grid_size]
-        embeds = images.new_zeros(B, self.coord_grid.shape[1], self.embed_dim)
+    def preprocess(self, sample: dict) -> dict:
+        # native image -> model grid, for both pretraining and eval
+        image = sample["image"] * sample["mask"]
+        mask = sample["mask"]
+        affine = sample["affine"]
+        image, mask, affine = crop_to_mask(image, mask, affine)
+        image, mask, affine = reorient_to_ras(image, mask, affine)
+        image, mask, affine = resample_to_spacing(image, mask, affine, TARGET_SPACING)
+        image, mask, affine = fit_to_shape(image, mask, affine, self.grid_size)
+        image = normalize_intensity(image, mask)
+        return {"image": image, "mask": mask, "affine": affine}
+
+    def transform(self, sample: ImageInput) -> dict:
+        image = sample["image"]
+        return {
+            "image": torch.from_numpy(image.get_fdata(dtype=np.float32)),
+            "mask": torch.from_numpy(np.asarray(sample["brain_mask"].dataobj) > 0),
+            "affine": image.affine,
+        }
+
+    @torch.inference_mode()
+    def forward_embeddings(
+        self, samples: list[dict], return_dense: bool = False
+    ) -> list[EmbeddingOutput]:
+        device = self.coord_grid.device
+        patch_grid_size = [size // self.patch_size[0] for size in self.grid_size]
 
         # one forward per image since the number of patches in the mask varies
-        for ii in range(B):
-            image_mask = mask[ii] > 0
-            values = images[ii][image_mask]
-            values = values / values.max()
-            values = (values - values.mean()) / values.std(correction=0).clamp_min(1e-6)
-            image = torch.zeros_like(images[ii])
-            image[image_mask] = values
+        outputs = []
+        for sample in samples:
+            sample = {
+                "image": sample["image"].to(device),
+                "mask": sample["mask"].to(device),
+                "affine": sample["affine"],
+            }
+            sample = self.preprocess(sample)
+            patches = patchify3d(sample["image"][None], self.patch_size[0])
+            in_mask = (patchify3d(sample["mask"][None], self.patch_size[0]) > 0).any(dim=2)[0]
+            with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+                tokens = self.forward_encoder(patches[:, in_mask], self.coord_grid[:, in_mask])
+            tokens = tokens[0, self.class_tokens :].float()
 
-            patches = patchify3d(image[None], self.patch_size)
-            in_mask = patchify3d(image_mask[None], self.patch_size).any(dim=2)[0]
-            x = self.forward_encoder(patches[:, in_mask], self.coord_grid[:, in_mask])
-            embeds[ii, in_mask] = x[0, self.class_tokens :].to(embeds.dtype)
+            output = EmbeddingOutput(
+                global_embedding=tokens.mean(dim=0),
+                dense_embedding=None,
+                dense_affine=None,
+                dense_mask=None,
+            )
+            if return_dense:
+                dense = tokens.new_zeros(len(in_mask), self.embed_dim)
+                dense[in_mask] = tokens
+                output["dense_embedding"] = dense.reshape(*patch_grid_size, self.embed_dim)
+                output["dense_affine"] = sample["affine"]
+                output["dense_mask"] = in_mask.reshape(patch_grid_size)
+            outputs.append(output)
+        return outputs
 
-        embeds = embeds.reshape(B, *patch_grid_size, self.embed_dim)
-        return embeds
 
-    def global_embed(
-        self,
-        images: Float[Tensor, "B X Y Z"],
-        mask: Float[Tensor, "B X Y Z"],
-    ) -> Float[Tensor, "B D"]:
-        embeds = self.dense_embed(images, mask).flatten(1, 3)
-        in_mask = patchify3d(mask > 0, self.patch_size).any(dim=2)
-        embeds = (embeds * in_mask[..., None]).sum(dim=1) / in_mask.sum(dim=1, keepdim=True)
-        return embeds
+@register_model
+def vit_mae_3d(checkpoint: str) -> ViTMAE3D:
+    # brainmarks-smri builder, run with `--overrides 'imports=[nanobrain.model]'`
+    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    model = ViTMAE3D.from_config(ckpt["args"])
+    model.load_state_dict(ckpt["model"])
+    return model
 
 
 def patchify3d(x: Tensor, patch_size: int = 8) -> Tensor:

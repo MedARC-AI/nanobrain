@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import io
 import json
 import logging
 import math
@@ -8,18 +9,20 @@ import time
 from pathlib import Path
 from typing import Iterable, Sequence
 
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import wandb
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
-from torch.utils.data import DataLoader, default_collate
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.flop_counter import FlopCounterMode
 
 import nanobrain.utils.misc as misc
-from nanobrain.data import BrainNpzDataset, process_sample
 from nanobrain.model import ViTMAE3D, patches_to_volume
+from nanobrain.transforms import brle_to_dense
 from nanobrain.visualization import plot_mask_pred
 
 logger = logging.getLogger()
@@ -64,7 +67,7 @@ def main(args: DictConfig):
     logger.info(f"config:\n{OmegaConf.to_yaml(args)}")
 
     # data loader
-    dataset = BrainNpzDataset(args.data_root, args.train_filelist)
+    dataset = Fomo300kDataset(args.data_root, args.train_filelist)
     logger.info(f"train dataset: {len(dataset)} images")
     train_loader = DataLoader(
         dataset,
@@ -219,9 +222,9 @@ def train_one_epoch(
             batch = misc.send_data(batch, device)
 
         # run volume processing on gpu, not cpu workers
-        batch = default_collate([process_sample(sample) for sample in batch])
-        images = batch["image"]
-        masks = batch["mask"]
+        samples = [model.preprocess(decode_sample(sample)) for sample in batch]
+        images = torch.stack([sample["image"] for sample in samples])
+        masks = torch.stack([sample["mask"] for sample in samples])
 
         with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=args.amp):
             loss = model(
@@ -294,6 +297,46 @@ def train_one_epoch(
 
     logger.info(f"Averaged stats: {metric_logger}")
     return {f"train/{k}": meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
+class Fomo300kDataset(Dataset):
+    def __init__(self, root: str | Path, filelist: str | Path):
+        self.root = Path(root)
+        self.paths = Path(filelist).read_text().split()
+        members = pd.read_parquet(
+            self.root / "tables" / "shards.parquet", columns=["path", "shard", "offset", "size"]
+        )
+        members = members.set_index("path").loc[self.paths]
+        self.shards = members["shard"].tolist()
+        self.offsets = members["offset"].to_numpy()
+        self.sizes = members["size"].to_numpy()
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __getitem__(self, index: int) -> dict:
+        # npz members are stored uncompressed, so read them straight from their offset
+        with open(self.root / self.shards[index], "rb") as shard:
+            shard.seek(self.offsets[index])
+            data = shard.read(self.sizes[index])
+        with np.load(io.BytesIO(data)) as npz:
+            sample = {
+                "path": self.paths[index],
+                "values": torch.from_numpy(npz["values"]),
+                "scale": float(npz["scale"]),
+                "mask_rle": torch.from_numpy(npz["mask_rle"]),
+                "shape": tuple(npz["shape"].tolist()),
+                "affine": npz["affine"],
+            }
+        return sample
+
+
+def decode_sample(sample: dict) -> dict:
+    mask = brle_to_dense(sample["mask_rle"], shape=sample["shape"])
+    values = sample["values"].float() * sample["scale"]
+    image = torch.zeros(mask.shape, dtype=values.dtype, device=values.device)
+    image.masked_scatter_(mask, values)
+    return {"image": image, "mask": mask, "affine": sample["affine"]}
 
 
 def count_batch_flops(args: DictConfig, model: nn.Module, device: torch.device) -> float:
