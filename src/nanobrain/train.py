@@ -20,7 +20,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.flop_counter import FlopCounterMode
 
-import nanobrain.utils.misc as misc
+import nanobrain.misc as misc
 from nanobrain.model import ViTMAE3D, patches_to_volume
 from nanobrain.transforms import brle_to_dense
 from nanobrain.visualization import plot_mask_pred

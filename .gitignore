@@ -32,6 +32,7 @@ wandb/
 .scratch
 tmp
 .tmp*
+_old/
 
 # AI assistants
 .claude/

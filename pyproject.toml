@@ -9,13 +9,8 @@ version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "braceexpand",
     "brainmarks-smri",
-    "datasets",
     "einops",
-    "flask",
-    "fsspec",
-    "huggingface-hub",
     "jaxtyping",
     "matplotlib",
     "nibabel",
@@ -23,21 +18,10 @@ dependencies = [
     "nvidia-ml-py",
     "omegaconf",
     "pandas",
-    "pyyaml",
-    "s3fs",
-    "scikit-image",
-    "scikit-learn",
-    "scipy",
-    "synthseg",
-    "tabulate",
-    "templateflow",
     "timm",
     "torch==2.14.0",
     "torchvision",
-    "tqdm",
     "wandb",
-    "webdataset",
-    "zstandard",
 ]
 
 [dependency-groups]
@@ -62,8 +46,7 @@ python-preference = "only-system"
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
-synthseg = { git = "https://github.com/MedARC-AI/SynthSeg.git", rev = "2690d9ac9ae28323d03043406cd21db0a8741547" }
-brainmarks-smri = { path = "third_party/brainmarks-smri", editable = true }
+brainmarks-smri = { git = "https://github.com/MedARC-AI/brainmarks-smri.git", rev = "647c340aaaace123cbbbd35cd81b24a887f4572f" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
