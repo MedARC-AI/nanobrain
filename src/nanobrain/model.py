@@ -11,7 +11,7 @@ from .modules import Block, LayerNorm, SeparablePosEmbed3D
 from .transforms import (
     crop_to_mask,
     fit_to_shape,
-    normalize_intensity,
+    normalize_values,
     reorient_to_ras,
     resample_to_spacing,
 )
@@ -217,24 +217,26 @@ class ViTMAE3D(nn.Module):
         return loss, state
 
     def preprocess(self, sample: dict) -> dict:
-        # native image -> model grid, for both pretraining and eval
-        image = sample["image"] * sample["mask"]
+        # native image -> model grid, for both pretraining and eval. expects the image cropped
+        # to the mask, normalized and zero outside the mask
+        image = sample["image"]
         mask = sample["mask"]
         affine = sample["affine"]
-        image, mask, affine = crop_to_mask(image, mask, affine)
         image, mask, affine = reorient_to_ras(image, mask, affine)
         image, mask, affine = resample_to_spacing(image, mask, affine, TARGET_SPACING)
         image, mask, affine = fit_to_shape(image, mask, affine, self.grid_size)
-        image = normalize_intensity(image, mask)
+        image = image * mask
         return {"image": image, "mask": mask, "affine": affine}
 
     def transform(self, sample: ImageInput) -> dict:
-        image = sample["image"]
-        return {
-            "image": torch.from_numpy(image.get_fdata(dtype=np.float32)),
-            "mask": torch.from_numpy(np.asarray(sample["brain_mask"].dataobj) > 0),
-            "affine": image.affine,
-        }
+        # same crop and normalization as the pretraining data, see decode_sample in train.py
+        image = torch.from_numpy(sample["image"].get_fdata(dtype=np.float32))
+        mask = torch.from_numpy(np.asarray(sample["brain_mask"].dataobj) > 0)
+        affine = sample["image"].affine
+        image, mask, affine = crop_to_mask(image, mask, affine)
+        normalized = torch.zeros_like(image)
+        normalized[mask] = normalize_values(image[mask])
+        return {"image": normalized, "mask": mask, "affine": affine}
 
     @torch.inference_mode()
     def forward_embeddings(

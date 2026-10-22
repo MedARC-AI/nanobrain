@@ -22,7 +22,7 @@ from torch.utils.flop_counter import FlopCounterMode
 
 import nanobrain.misc as misc
 from nanobrain.model import ViTMAE3D, patches_to_volume
-from nanobrain.transforms import brle_to_dense
+from nanobrain.transforms import brle_to_dense, normalize_values
 from nanobrain.visualization import plot_mask_pred
 
 logger = logging.getLogger()
@@ -189,6 +189,9 @@ def train_one_epoch(
     metric_logger.add_meter(
         "watts", misc.SmoothedValue(window_size=1, fmt="{value:.0f} ({global_avg:.0f})")
     )
+    # cpu time, the step has no syncs. prep is host to device copy and gpu preprocess
+    metric_logger.add_meter("prep", misc.SmoothedValue(fmt="{avg:.4f}"))
+    metric_logger.add_meter("model", misc.SmoothedValue(fmt="{avg:.4f}"))
     header = f"Train: [{epoch}]"
 
     throughput = misc.ThroughputMeter(
@@ -218,6 +221,7 @@ def train_one_epoch(
         if need_update:
             misc.update_lr(optimizer.param_groups, lr)
 
+        prep_start = time.perf_counter()
         if use_cuda:
             batch = misc.send_data(batch, device)
 
@@ -225,6 +229,7 @@ def train_one_epoch(
         samples = [model.preprocess(decode_sample(sample)) for sample in batch]
         images = torch.stack([sample["image"] for sample in samples])
         masks = torch.stack([sample["mask"] for sample in samples])
+        model_start = time.perf_counter()
 
         with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=args.amp):
             loss = model(
@@ -247,8 +252,11 @@ def train_one_epoch(
             max_norm=args.clip_grad,
         )
 
+        model_end = time.perf_counter()
+
         # log tensors without syncing, values are only read on log steps
         metric_logger.update(loss=loss_for_log)
+        metric_logger.update(prep=model_start - prep_start, model=model_end - model_start)
         if need_update:
             metric_logger.update(lr=lr, grad=grad_norm)
 
@@ -333,7 +341,9 @@ class Fomo300kDataset(Dataset):
 
 def decode_sample(sample: dict) -> dict:
     mask = brle_to_dense(sample["mask_rle"], shape=sample["shape"])
-    values = sample["values"].float() * sample["scale"]
+    # normalize the in-mask values before scattering, normalizing the dense image would sync.
+    # images are already cropped to the mask. eval does the same in ViTMAE3D.transform
+    values = normalize_values(sample["values"].float() * sample["scale"])
     image = torch.zeros(mask.shape, dtype=values.dtype, device=values.device)
     image.masked_scatter_(mask, values)
     return {"image": image, "mask": mask, "affine": sample["affine"]}

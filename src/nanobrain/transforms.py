@@ -110,17 +110,14 @@ def fit_to_shape(
     return F.pad(image, pad), F.pad(mask, pad), affine @ shift
 
 
-def normalize_intensity(
-    image: Float[Tensor, "X Y Z"],
-    mask: Float[Tensor, "X Y Z"],
-    clip_quantiles: tuple[float, float] = (0.005, 0.995),
-) -> Float[Tensor, "X Y Z"]:
-    in_mask = mask > 0
-    values = image[in_mask]
-    quantiles = torch.tensor(clip_quantiles, device=values.device, dtype=values.dtype)
-    low, high = torch.quantile(values, quantiles)
+def normalize_values(
+    values: Float[Tensor, " N"], clip_quantiles: tuple[float, float] = (0.005, 0.995)
+) -> Float[Tensor, " N"]:
+    # nearest rank clip thresholds. torch.quantile needs a q tensor, and copying it to the gpu syncs
+    sorted_values = values.sort().values
+    last = len(values) - 1
+    low = sorted_values[round(clip_quantiles[0] * last)]
+    high = sorted_values[round(clip_quantiles[1] * last)]
     values = values.clamp(low, high)
     values = (values - values.mean()) / values.std(correction=0).clamp_min(1e-6)
-    image = torch.zeros_like(image)
-    image[in_mask] = values
-    return image
+    return values
