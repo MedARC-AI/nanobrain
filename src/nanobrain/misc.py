@@ -478,7 +478,7 @@ def update_wd(param_groups, weight_decay: float | None = None):
 
 
 # moving data to cuda utils copied from capi
-# added device argument
+# added device and transform
 
 
 def send_data(x, device=None):
@@ -489,8 +489,6 @@ def send_data(x, device=None):
 
     if isinstance(x, torch.Tensor):
         x = x.to(device=device, non_blocking=True)
-        if device.type == "cuda":
-            x.record_stream(torch.cuda.current_stream(device))
         return x
     if isinstance(x, dict):
         return {k: send_data(v, device=device) for k, v in x.items()}
@@ -499,16 +497,30 @@ def send_data(x, device=None):
     return x
 
 
-def pre_send_to_cuda_wrapper(generator, device=None):
-    """From apex"""
+def record_stream(x, stream):
+    if isinstance(x, torch.Tensor) and x.is_cuda:
+        x.record_stream(stream)
+    if isinstance(x, dict):
+        for v in x.values():
+            record_stream(v, stream)
+    if isinstance(x, list):
+        for v in x:
+            record_stream(v, stream)
+
+
+def pre_send_to_cuda_wrapper(generator, batch_transform=None, device=None):
     data = None
     stream = torch.cuda.Stream(device)
     for next_data in generator:
         with torch.cuda.stream(stream):
             next_data = send_data(next_data, device=device)
+            if batch_transform is not None:
+                next_data = batch_transform(next_data)
         if data is not None:
             yield data
-        torch.cuda.current_stream(device).wait_stream(stream)
+        main_stream = torch.cuda.current_stream(device)
+        main_stream.wait_stream(stream)
+        record_stream(next_data, main_stream)
         data = next_data
     if data is not None:
         yield data

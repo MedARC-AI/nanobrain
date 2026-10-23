@@ -8,15 +8,13 @@ from torch import Tensor
 from jaxtyping import Float, Int
 
 from .modules import Block, LayerNorm, SeparablePosEmbed3D
-from .transforms import (
+from .data import (
     crop_to_mask,
     fit_to_shape,
     normalize_values,
     reorient_to_ras,
     resample_to_spacing,
 )
-
-TARGET_SPACING = 1.0
 
 
 class ViTMAE3D(nn.Module):
@@ -25,6 +23,7 @@ class ViTMAE3D(nn.Module):
     def __init__(
         self,
         grid_size: tuple[int, int, int] = (192, 240, 192),
+        target_spacing: float = 1.0,
         patch_size: int = 8,
         depth: int = 12,
         embed_dim: int = 768,
@@ -37,14 +36,17 @@ class ViTMAE3D(nn.Module):
         mlp_ratio: int | float = 4,
         class_tokens: int = 1,
         drop_path_rate: float = 0.0,
+        clip_quantiles: tuple[float, float] = (0.005, 0.995),
     ):
         super().__init__()
         self.grid_size = grid_size
+        self.target_spacing = target_spacing
         # tuple for the brainmarks-smri model contract
         self.patch_size = (patch_size, patch_size, patch_size)
         self.embed_dim = embed_dim
         self.class_tokens = class_tokens
         patch_grid_size = tuple(size // patch_size for size in grid_size)
+        self.clip_quantiles = clip_quantiles
 
         patch_dim = patch_size**3
         self.register_buffer("coord_grid", make_coord_grid(grid_size, patch_size), persistent=False)
@@ -101,6 +103,8 @@ class ViTMAE3D(nn.Module):
     def from_config(cls, args: dict) -> "ViTMAE3D":
         return cls(
             grid_size=tuple(args["grid_size"]),
+            target_spacing=args["target_spacing"],
+            clip_quantiles=tuple(args["clip_quantiles"]),
             patch_size=args["patch_size"],
             **args["model_kwargs"],
         )
@@ -216,27 +220,28 @@ class ViTMAE3D(nn.Module):
         }
         return loss, state
 
-    def preprocess(self, sample: dict) -> dict:
-        # native image -> model grid, for both pretraining and eval. expects the image cropped
-        # to the mask, normalized and zero outside the mask
-        image = sample["image"]
-        mask = sample["mask"]
-        affine = sample["affine"]
-        image, mask, affine = reorient_to_ras(image, mask, affine)
-        image, mask, affine = resample_to_spacing(image, mask, affine, TARGET_SPACING)
-        image, mask, affine = fit_to_shape(image, mask, affine, self.grid_size)
-        image = image * mask
-        return {"image": image, "mask": mask, "affine": affine}
+    # the methods below implement the brainmarks model contract.
+    #   - forward_embeddings: computes a global and dense embedding per input sample
+    #   - transform: cpu data transform, runs in loader workers (optional)
+    #   - transform_cuda: cuda data transform. you call it inside forward_embeddings (optional)
 
-    def transform(self, sample: ImageInput) -> dict:
-        # same crop and normalization as the pretraining data, see decode_sample in train.py
+    def transform(self, sample: ImageInput) -> dict[str, Tensor]:
         image = torch.from_numpy(sample["image"].get_fdata(dtype=np.float32))
         mask = torch.from_numpy(np.asarray(sample["brain_mask"].dataobj) > 0)
         affine = sample["image"].affine
         image, mask, affine = crop_to_mask(image, mask, affine)
-        normalized = torch.zeros_like(image)
-        normalized[mask] = normalize_values(image[mask])
-        return {"image": normalized, "mask": mask, "affine": affine}
+        return {"values": image[mask], "mask": mask, "affine": affine}
+
+    def transform_cuda(self, sample: dict[str, Tensor]) -> dict:
+        values = sample["values"]
+        mask = sample["mask"]
+        affine = sample["affine"]
+        values = normalize_values(values, self.clip_quantiles)
+        image = values.new_zeros(mask.shape).masked_scatter_(mask, values)
+        image, mask, affine = reorient_to_ras(image, mask, affine)
+        image, mask, affine = resample_to_spacing(image, mask, affine, self.target_spacing)
+        image, mask, affine = fit_to_shape(image, mask, affine, self.grid_size)
+        return {"image": image, "mask": mask, "affine": affine}
 
     @torch.inference_mode()
     def forward_embeddings(
@@ -249,11 +254,11 @@ class ViTMAE3D(nn.Module):
         outputs = []
         for sample in samples:
             sample = {
-                "image": sample["image"].to(device),
+                "values": sample["values"].to(device),
                 "mask": sample["mask"].to(device),
                 "affine": sample["affine"],
             }
-            sample = self.preprocess(sample)
+            sample = self.transform_cuda(sample)
             patches = patchify3d(sample["image"][None], self.patch_size[0])
             in_mask = (patchify3d(sample["mask"][None], self.patch_size[0]) > 0).any(dim=2)[0]
             with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):

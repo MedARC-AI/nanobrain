@@ -1,28 +1,26 @@
 import argparse
 import datetime
-import io
 import json
 import logging
 import math
 import os
 import time
+from functools import partial
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
-import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import wandb
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.utils.flop_counter import FlopCounterMode
 
 import nanobrain.misc as misc
+from nanobrain.data import Fomo300kDataset, default_transform
 from nanobrain.model import ViTMAE3D, patches_to_volume
-from nanobrain.transforms import brle_to_dense, normalize_values
 from nanobrain.visualization import plot_mask_pred
 
 logger = logging.getLogger()
@@ -68,13 +66,14 @@ def main(args: DictConfig):
 
     # data loader
     dataset = Fomo300kDataset(args.data_root, args.train_filelist)
+    batch_transform = make_batch_transform(args)
     logger.info(f"train dataset: {len(dataset)} images")
     train_loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        collate_fn=list,  # no collate, variable shapes. lambda can't be pickled to workers
+        collate_fn=list,  # no collate, variable shapes
         pin_memory=True,
         drop_last=True,
         persistent_workers=args.num_workers > 0,
@@ -145,6 +144,7 @@ def main(args: DictConfig):
             args,
             model,
             train_loader,
+            batch_transform,
             optimizer,
             loss_scaler,
             lr_schedule,
@@ -167,6 +167,7 @@ def train_one_epoch(
     args: DictConfig,
     model: nn.Module,
     data_loader: Iterable,
+    batch_transform: Callable,
     optimizer: torch.optim.Optimizer,
     loss_scaler: torch.GradScaler | None,
     lr_schedule: Sequence[float],
@@ -189,9 +190,6 @@ def train_one_epoch(
     metric_logger.add_meter(
         "watts", misc.SmoothedValue(window_size=1, fmt="{value:.0f} ({global_avg:.0f})")
     )
-    # cpu time, the step has no syncs. prep is host to device copy and gpu preprocess
-    metric_logger.add_meter("prep", misc.SmoothedValue(fmt="{avg:.4f}"))
-    metric_logger.add_meter("model", misc.SmoothedValue(fmt="{avg:.4f}"))
     header = f"Train: [{epoch}]"
 
     throughput = misc.ThroughputMeter(
@@ -221,15 +219,13 @@ def train_one_epoch(
         if need_update:
             misc.update_lr(optimizer.param_groups, lr)
 
-        prep_start = time.perf_counter()
         if use_cuda:
             batch = misc.send_data(batch, device)
 
-        # run volume processing on gpu, not cpu workers
-        samples = [model.preprocess(decode_sample(sample)) for sample in batch]
-        images = torch.stack([sample["image"] for sample in samples])
-        masks = torch.stack([sample["mask"] for sample in samples])
-        model_start = time.perf_counter()
+        # run volume processing on gpu, not cpu workers, ~25x faster
+        batch = batch_transform(batch)
+        images = batch["image"]
+        masks = batch["mask"]
 
         with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=args.amp):
             loss = model(
@@ -252,11 +248,8 @@ def train_one_epoch(
             max_norm=args.clip_grad,
         )
 
-        model_end = time.perf_counter()
-
         # log tensors without syncing, values are only read on log steps
         metric_logger.update(loss=loss_for_log)
-        metric_logger.update(prep=model_start - prep_start, model=model_end - model_start)
         if need_update:
             metric_logger.update(lr=lr, grad=grad_norm)
 
@@ -307,46 +300,21 @@ def train_one_epoch(
     return {f"train/{k}": meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-class Fomo300kDataset(Dataset):
-    def __init__(self, root: str | Path, filelist: str | Path):
-        self.root = Path(root)
-        self.paths = Path(filelist).read_text().split()
-        members = pd.read_parquet(
-            self.root / "tables" / "shards.parquet", columns=["path", "shard", "offset", "size"]
-        )
-        members = members.set_index("path").loc[self.paths]
-        self.shards = members["shard"].tolist()
-        self.offsets = members["offset"].to_numpy()
-        self.sizes = members["size"].to_numpy()
+def make_batch_transform(args: DictConfig):
+    transform = partial(
+        default_transform,
+        target_spacing=args.target_spacing,
+        grid_size=tuple(args.grid_size),
+        clip_quantiles=tuple(args.clip_quantiles),
+    )
 
-    def __len__(self) -> int:
-        return len(self.paths)
+    def fn(batch: list[dict[str, Tensor]]) -> dict[str, Tensor]:
+        batch = [transform(sample) for sample in batch]
+        images = torch.stack([sample["image"] for sample in batch])
+        masks = torch.stack([sample["mask"] for sample in batch])
+        return {"image": images, "mask": masks}
 
-    def __getitem__(self, index: int) -> dict:
-        # npz members are stored uncompressed, so read them straight from their offset
-        with open(self.root / self.shards[index], "rb") as shard:
-            shard.seek(self.offsets[index])
-            data = shard.read(self.sizes[index])
-        with np.load(io.BytesIO(data)) as npz:
-            sample = {
-                "path": self.paths[index],
-                "values": torch.from_numpy(npz["values"]),
-                "scale": float(npz["scale"]),
-                "mask_rle": torch.from_numpy(npz["mask_rle"]),
-                "shape": tuple(npz["shape"].tolist()),
-                "affine": npz["affine"],
-            }
-        return sample
-
-
-def decode_sample(sample: dict) -> dict:
-    mask = brle_to_dense(sample["mask_rle"], shape=sample["shape"])
-    # normalize the in-mask values before scattering, normalizing the dense image would sync.
-    # images are already cropped to the mask. eval does the same in ViTMAE3D.transform
-    values = normalize_values(sample["values"].float() * sample["scale"])
-    image = torch.zeros(mask.shape, dtype=values.dtype, device=values.device)
-    image.masked_scatter_(mask, values)
-    return {"image": image, "mask": mask, "affine": sample["affine"]}
+    return fn
 
 
 def count_batch_flops(args: DictConfig, model: nn.Module, device: torch.device) -> float:

@@ -1,11 +1,64 @@
+import io
 import math
+from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from jaxtyping import Bool, Float
 from torch import Tensor
+from torch.utils.data import Dataset
+
+
+class Fomo300kDataset(Dataset):
+    def __init__(self, root: str | Path, filelist: str | Path):
+        self.root = Path(root)
+        self.paths = Path(filelist).read_text().split()
+        members = pd.read_parquet(
+            self.root / "tables" / "shards.parquet", columns=["path", "shard", "offset", "size"]
+        )
+        members = members.set_index("path").loc[self.paths]
+        self.shards = members["shard"].tolist()
+        self.offsets = members["offset"].to_numpy()
+        self.sizes = members["size"].to_numpy()
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __getitem__(self, index: int) -> dict:
+        # npz members are stored uncompressed, so read them straight from their offset
+        with open(self.root / self.shards[index], "rb") as shard:
+            shard.seek(self.offsets[index])
+            data = shard.read(self.sizes[index])
+        with np.load(io.BytesIO(data)) as npz:
+            sample = {
+                "path": self.paths[index],
+                "values": torch.from_numpy(npz["values"]),
+                "scale": float(npz["scale"]),
+                "mask_rle": torch.from_numpy(npz["mask_rle"]),
+                "shape": tuple(npz["shape"].tolist()),
+                "affine": npz["affine"],
+            }
+        return sample
+
+
+def default_transform(
+    sample: dict[str, Tensor],
+    *,
+    target_spacing: float = 1.0,
+    grid_size: tuple[int, int, int] = (192, 240, 192),
+    clip_quantiles: tuple[float, float] = (0.005, 0.995),
+) -> dict[str, Tensor]:
+    values = sample["values"].float() * sample["scale"]
+    values = normalize_values(values, clip_quantiles)
+    mask = brle_to_dense(sample["mask_rle"], shape=sample["shape"])
+    image = values.new_zeros(mask.shape).masked_scatter_(mask, values)
+    image, mask, affine = reorient_to_ras(image, mask, sample["affine"])
+    image, mask, affine = resample_to_spacing(image, mask, affine, target_spacing)
+    image, mask, affine = fit_to_shape(image, mask, affine, grid_size)
+    return {"image": image, "mask": mask, "affine": affine}
 
 
 def brle_to_dense(mask_rle: torch.Tensor, shape: tuple[int, int, int]) -> torch.Tensor:
@@ -65,6 +118,7 @@ def resample_to_spacing(
     new_size = new_shape.tolist()
     image = F.interpolate(image[None, None], size=new_size, mode="trilinear")[0, 0]
     mask = F.interpolate(mask[None, None].float(), size=new_size, mode="nearest-exact")[0, 0]
+    image = image * mask
 
     # interpolate maps output voxel i to input voxel (i + 0.5) * scale - 0.5
     scale = shape / new_shape
@@ -114,6 +168,8 @@ def normalize_values(
     values: Float[Tensor, " N"], clip_quantiles: tuple[float, float] = (0.005, 0.995)
 ) -> Float[Tensor, " N"]:
     # nearest rank clip thresholds. torch.quantile needs a q tensor, and copying it to the gpu syncs
+    # cf https://docs.pytorch.org/devlogs/eager/2026-08-11-hidden-h2d-sync/
+    # nb, another option would a torch module with fixed q tensor buffer. but can't be bothered.
     sorted_values = values.sort().values
     last = len(values) - 1
     low = sorted_values[round(clip_quantiles[0] * last)]

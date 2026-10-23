@@ -12,10 +12,11 @@ data_root: data/fomo300k
 train_filelist: src/nanobrain/config/fomo300k_images.txt
 num_workers: 8
 prefetch_factor: 2
+clip_quantiles: [0.005, 0.995]
 
 # Fixed 1mm grid that all images are fit to.
-# todo: decide whether the grid should be a config option or constant
 grid_size: [192, 240, 192]
+target_spacing: 1.0
 patch_size: 8
 
 # Sequence sampling. ~3200 brain mask patches per image on average, so num_visible 640 is a
