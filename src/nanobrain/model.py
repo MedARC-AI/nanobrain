@@ -282,11 +282,11 @@ class ViTMAE3D(nn.Module):
 
 
 @register_model
-def vit_mae_3d(checkpoint: str) -> ViTMAE3D:
-    # brainmarks-smri builder, run with `--overrides 'imports=[nanobrain.model]'`
+def vit_mae_3d(checkpoint: str, random_weights: bool = False) -> ViTMAE3D:
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
     model = ViTMAE3D.from_config(ckpt["args"])
-    model.load_state_dict(ckpt["model"])
+    if not random_weights:
+        model.load_state_dict(ckpt["model"])
     return model
 
 

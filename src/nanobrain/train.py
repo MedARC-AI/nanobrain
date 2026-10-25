@@ -7,8 +7,9 @@ import os
 import time
 from functools import partial
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable
 
+import numpy as np
 import torch
 import torch.nn as nn
 import wandb
@@ -119,14 +120,11 @@ def main(args: DictConfig):
     steps_per_epoch = math.ceil(epoch_num_batches / args.accum_iter)
     total_steps = args.epochs * steps_per_epoch
     warmup_steps = args.warmup_epochs * steps_per_epoch
-    lr_schedule = misc.WarmupThenCosine(
-        base_value=args.lr,
-        final_value=args.min_lr,
-        total_iters=total_steps,
-        warmup_iters=warmup_steps,
-    )
+    decay_steps = args.decay_epochs * steps_per_epoch
+    lr_schedule = make_lr_schedule(args.lr, args.min_lr, total_steps, warmup_steps, decay_steps)
     logger.info(f"full schedule: epochs = {args.epochs} (steps = {total_steps})")
     logger.info(f"warmup: epochs = {args.warmup_epochs} (steps = {warmup_steps})")
+    logger.info(f"decay: epochs = {args.decay_epochs} (steps = {decay_steps})")
 
     # loss scaling not needed for bfloat16 (according to timm)
     if args.amp and args.amp_dtype != "bfloat16":
@@ -170,7 +168,7 @@ def train_one_epoch(
     batch_transform: Callable,
     optimizer: torch.optim.Optimizer,
     loss_scaler: torch.GradScaler | None,
-    lr_schedule: Sequence[float],
+    lr_schedule: np.ndarray,
     epoch: int,
     device: torch.device,
     batch_flops: float,
@@ -215,7 +213,7 @@ def train_one_epoch(
         group_size = min(args.accum_iter, num_batches - update_in_epoch * args.accum_iter)
         need_update = batch_step % args.accum_iter == 0 or batch_step == num_batches
         global_step = epoch * steps_per_epoch + update_in_epoch
-        lr = lr_schedule[global_step]
+        lr = float(lr_schedule[global_step])
         if need_update:
             misc.update_lr(optimizer.param_groups, lr)
 
@@ -298,6 +296,15 @@ def train_one_epoch(
 
     logger.info(f"Averaged stats: {metric_logger}")
     return {f"train/{k}": meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
+def make_lr_schedule(
+    lr: float, min_lr: float, total_steps: int, warmup_steps: int, decay_steps: int
+) -> np.ndarray:
+    warmup = np.linspace(0.0, lr, warmup_steps, endpoint=False)
+    stable = np.full(total_steps - warmup_steps - decay_steps, lr)
+    decay = np.linspace(lr, min_lr, decay_steps)
+    return np.concatenate([warmup, stable, decay])
 
 
 def make_batch_transform(args: DictConfig):

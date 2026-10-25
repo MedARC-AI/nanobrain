@@ -356,40 +356,6 @@ def load_model(args, model_without_ddp, optimizer, loss_scaler):
 # optimization utils
 
 
-# from capi
-class WarmupThenCosine:
-    def __init__(
-        self,
-        base_value: float,
-        final_value: float,
-        total_iters: int,
-        warmup_iters: int = 0,
-        start_warmup_value: float = 0.0,
-        freeze_iters: int = 0,
-        truncate_cos: float = 1.0,
-    ):
-        super().__init__()
-        self.final_value = final_value
-        self.total_iters = total_iters
-
-        freeze_schedule = np.zeros(freeze_iters)
-
-        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
-
-        iters = np.arange(total_iters - warmup_iters - freeze_iters)
-        schedule = final_value + 0.5 * (base_value - final_value) * (
-            1 + np.cos(np.pi * truncate_cos * iters / len(iters))
-        )
-        self.schedule = np.concatenate((freeze_schedule, warmup_schedule, schedule))
-        assert len(self.schedule) == self.total_iters
-
-    def __getitem__(self, it: int) -> float:
-        if it >= self.total_iters:
-            return self.final_value
-        # cast to float or else it can corrupt the checkpoint
-        return float(self.schedule[it])
-
-
 # adapted from timm backward logic
 # https://github.com/huggingface/pytorch-image-models/blob/main/timm/utils/cuda.py
 def backward_step(
