@@ -319,7 +319,9 @@ def save_model(args, epoch, model_without_ddp, optimizer, loss_scaler):
     logger.info(f"saving checkpoint {last_checkpoint_path}")
     save_on_master(to_save, last_checkpoint_path)
 
-    if args.checkpoint_period and (epoch + 1) % args.checkpoint_period == 0:
+    periodic = args.checkpoint_period and (epoch + 1) % args.checkpoint_period == 0
+    listed = args.checkpoint_epochs and (epoch + 1) in args.checkpoint_epochs
+    if periodic or listed:
         logger.info(f"saving checkpoint {checkpoint_path}")
         save_on_master(to_save, checkpoint_path)
 
