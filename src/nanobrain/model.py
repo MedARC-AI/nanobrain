@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from brainmarks_smri.models import EmbeddingOutput, ImageInput, register_model
 from einops import rearrange
 from torch import Tensor
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from jaxtyping import Float, Int
 
 from .modules import Block, LayerNorm, SeparablePosEmbed3D
@@ -261,7 +262,11 @@ class ViTMAE3D(nn.Module):
             sample = self.transform_cuda(sample)
             patches = patchify3d(sample["image"][None], self.patch_size[0])
             in_mask = (patchify3d(sample["mask"][None], self.patch_size[0]) > 0).any(dim=2)[0]
-            with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+            # cudnn attention builds a new graph (~45 ms) for each new sequence length
+            with (
+                sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]),
+                torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"),
+            ):
                 tokens = self.forward_encoder(patches[:, in_mask], self.coord_grid[:, in_mask])
             tokens = tokens[0, self.class_tokens :].float()
 
