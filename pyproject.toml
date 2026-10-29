@@ -46,7 +46,7 @@ python-preference = "only-system"
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
-brainmarks-smri = { git = "https://github.com/MedARC-AI/brainmarks-smri.git", rev = "49b1fbaa359816459bd61b68b66379e173c0a292" }
+brainmarks-smri = { git = "https://github.com/MedARC-AI/brainmarks-smri.git", rev = "7b6e26f2763927d907b35b864ea29cfab8bfc072" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
