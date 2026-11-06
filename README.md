@@ -33,13 +33,13 @@ sbatch scripts/train.sbatch smoke notes="smoke test" time_limit=5
 sbatch scripts/train.sbatch my-run notes="what changed and why"
 ```
 
-`train.sbatch` trains for 2 hours (`time_limit`), then evaluates the last checkpoint on the brainmarks-smri `open` tasks and submits it, except smoke tests.
+`train.sbatch` trains for 1 hour (`time_limit`), then evaluates the last checkpoint on the brainmarks-smri `open` tasks and submits it, except smoke tests.
 
 `submit.py` posts the score and your code to [labless](https://labless.dev/nano-projects/nanobrain-smri). Sign in once with `--login-only` before your first job. Remember to push your branch so others can check out your commit.
 
 ## Rules
 
-- Training gets 2 hours of wall time on one H100 (~7e18 theoretical FLOPs).
+- Training gets 1 hour of wall time on one H100 (~3.6e18 theoretical FLOPs).
 - Pretrain only on the FOMO300K images in brainmarks-smri.
 - The score is the mean over the fixed 11 brainmarks-smri `open` tasks.
 - No weights or teachers pretrained on brain MRI.

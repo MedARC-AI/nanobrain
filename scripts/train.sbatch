@@ -28,7 +28,7 @@ if [[ -f .env ]]; then
     set +a
 fi
 
-# Train until total_steps or time_limit (2 hr default).
+# Train until total_steps or time_limit (1 hr default).
 uv run --no-sync python -m nanobrain.train \
     --overrides output_dir=output name="${NAME}" "$@"
 
