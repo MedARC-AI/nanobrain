@@ -24,7 +24,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 
 API_URL = "https://api.labless.dev"
-PROJECT = "nanobrain"
+PROJECT = "nanobrain-smri"
 MAX_NAME_LENGTH = 20
 TOKEN_PATH = Path.home() / ".cache" / "nanobrain" / "labless_token.json"
 # brainmarks-smri task group scored by the leaderboard. keep in sync with scripts/train.sbatch
@@ -34,6 +34,10 @@ REVIEW_SUFFIXES = (".py", ".yaml", ".yml")
 
 
 def main(args: argparse.Namespace):
+    if args.login_only:
+        github_sign_in()
+        return
+
     # recorded for maintainers. validation reruns the eval with the pinned brainmarks-smri
     brainmarks_url = importlib.metadata.distribution("brainmarks-smri").read_text("direct_url.json")
     installed_commit = json.loads(brainmarks_url).get("vcs_info", {}).get("commit_id")
@@ -193,7 +197,8 @@ def github_sign_in() -> tuple[str, str]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("run_dirs", type=Path, nargs="+", help="run output folders, output/NAME")
+    parser.add_argument("run_dirs", type=Path, nargs="*", help="run output folders, output/NAME")
     parser.add_argument("--dry-run", action="store_true", help="check and save, don't submit")
+    parser.add_argument("--login-only", action="store_true", help="sign in once, for slurm jobs")
     args = parser.parse_args()
     main(args)

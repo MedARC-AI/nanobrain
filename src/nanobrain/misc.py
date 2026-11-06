@@ -546,7 +546,7 @@ def random_seed(seed: int) -> None:
 def git_info(path: Path = Path(__file__).parent) -> dict[str, Any] | None:
     """Commit, branch, dirty state and origin of the git repo containing `path`; None outside one."""
     kwargs = dict(cwd=path, capture_output=True, text=True)
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], **kwargs)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], **kwargs)
     if sha.returncode != 0:
         return None
     branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], **kwargs).stdout.strip()

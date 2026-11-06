@@ -40,4 +40,7 @@ uv run --no-sync python -m brainmarks_smri vit_mae_3d "${TASK_GROUP}" \
     output_dir="${RUN_DIR}" \
     name=eval
 
-echo "To submit: uv run python scripts/submit.py ${RUN_DIR}"
+# Submit to labless, except smoke tests.
+if [[ "${NAME}" != smoke* ]]; then
+    uv run --no-sync python scripts/submit.py "${RUN_DIR}"
+fi

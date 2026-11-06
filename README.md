@@ -28,14 +28,14 @@ echo "BRAINMARKS_SMRI_DATA=data" >> .env
 ## Train, evaluate, submit
 
 ```sh
+uv run python scripts/submit.py --login-only
 sbatch scripts/train.sbatch smoke notes="smoke test" time_limit=5
 sbatch scripts/train.sbatch my-run notes="what changed and why"
-uv run python scripts/submit.py output/my-run
 ```
 
-`train.sbatch` trains for 2 hours (`time_limit`), then evaluates the last checkpoint on the brainmarks-smri `open` tasks.
+`train.sbatch` trains for 2 hours (`time_limit`), then evaluates the last checkpoint on the brainmarks-smri `open` tasks and submits it, except smoke tests.
 
-`submit.py` posts the score and your code to [labless](https://labless.dev/nano-projects/nanobrain). Remember to push your branch so others can check out your commit.
+`submit.py` posts the score and your code to [labless](https://labless.dev/nano-projects/nanobrain-smri). Sign in once with `--login-only` before your first job. Remember to push your branch so others can check out your commit.
 
 ## Rules
 
