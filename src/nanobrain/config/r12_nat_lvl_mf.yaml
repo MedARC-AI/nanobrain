@@ -5,7 +5,7 @@ train_filelist: src/nanobrain/config/fomo300k_images_qc.txt
 anneal_filelist: null
 num_workers: 16
 prefetch_factor: 4
-prep_threads: 2
+prep_threads: 3
 prep_lean: false
 clip_quantiles:
 - 0.005
@@ -36,13 +36,15 @@ accum_iter: 1
 base_lr: 0.002
 lr: null
 min_lr: 1.0e-06
-time_limit: null
+time_limit: 59.5
 total_steps: 22500
 warmup_steps: 6750
 decay_steps: 0
 epochs: 3.5
 warmup_epochs: 0.77
 decay_epochs: 0.7
+time_schedule: true
+time_decay_frac: 0.2
 weight_decay: 0.05
 betas:
 - 0.9
@@ -59,11 +61,11 @@ muon_fused: true
 amp: true
 amp_dtype: bfloat16
 compile: true
-gc_freeze: false
+gc_freeze: true
 cudagraphs: false
-fast_startup: false
-high_priority_stream: false
-decoder_prune_last: false
+fast_startup: true
+high_priority_stream: true
+decoder_prune_last: true
 flash_attention_impl: FA3
 ckpt: null
 resume: false
@@ -79,6 +81,6 @@ device: cuda
 distributed: false
 seed: 7338
 debug: false
-wandb: true
+wandb: false
 wandb_entity: null
 wandb_project: nanobrain-climb
