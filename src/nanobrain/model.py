@@ -11,6 +11,7 @@ from torch import Tensor
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from jaxtyping import Float, Int
 
+from .fino import FinoHeads
 from .modules import Block, LayerNorm, NativeEmbed, NativeHead, SeparablePosEmbed3D
 from .data import (
     crop_to_mask,
@@ -72,6 +73,9 @@ class ViTMAE3D(nn.Module):
         norm_target: bool = False,
         grad_loss_weight: float = 0.0,
         fg_loss_weight: float = 0.0,
+        # fino3d config block (nanobrain.fino), training only heads on the global embedding;
+        # None = off (no params, same init)
+        fino3d: dict | None = None,
     ):
         super().__init__()
         self.norm_target = norm_target
@@ -166,6 +170,13 @@ class ViTMAE3D(nn.Module):
         else:
             self.decoder_head = nn.Linear(decoder_embed_dim, patch_dim)
         self.init_weights()
+        # built after the base init, so every base parameter is initialized as with fino3d off
+        self.fino_heads = None
+        self.fino_stats = {}
+        if fino3d is not None:
+            assert native, "fino3d: native training only"
+            self.fino_heads = FinoHeads(embed_dim, fino3d)
+            self.fino_heads.apply(_init_weights)
 
     @classmethod
     def from_config(cls, args: dict) -> "ViTMAE3D":
@@ -175,6 +186,7 @@ class ViTMAE3D(nn.Module):
             clip_quantiles=tuple(args["clip_quantiles"]),
             patch_size=args["patch_size"],
             native=args["native"],
+            fino3d=fino if (fino := args.get("fino3d")) and fino.get("enabled") else None,
             **args["model_kwargs"],
         )
 
@@ -280,11 +292,14 @@ class ViTMAE3D(nn.Module):
         num_samples: int = 1,
         with_state: bool = True,
         spacing: list[tuple[float, float, float]] | None = None,
+        fino_meta: Tensor | None = None,
+        fino_gamma: float = 0.0,
     ):
         if isinstance(images, list):
             # native resolution batch, images on their own voxel grids
             return self.forward_native(
-                images, mask, spacing, num_visible, num_predict, num_samples, with_state
+                images, mask, spacing, num_visible, num_predict, num_samples, with_state,
+                fino_meta=fino_meta, fino_gamma=fino_gamma,
             )
         seqs, order = self.sample_patches(images, mask, num_visible, num_predict, num_samples)
         if not with_state:
@@ -475,6 +490,8 @@ class ViTMAE3D(nn.Module):
         num_predict: int,
         num_samples: int = 1,
         with_state: bool = True,
+        fino_meta: Tensor | None = None,
+        fino_gamma: float = 0.0,
     ):
         # images (float) and masks (bool) on their own voxel grids (sample_transform native), fit
         # here to the grid_size mm box in their voxels. images with the same spacing share one
@@ -618,6 +635,14 @@ class ViTMAE3D(nn.Module):
                 )
                 num, den = num + n, den + d
             loss = loss + self.level_weight * num / den.clamp_min(1e-6)
+        if self.fino_heads is not None and fino_meta is not None:
+            # the global embedding of each sequence: mean of its visible encoder tokens (eval:
+            # mean of all brain-touching tokens); rows are part by part, image-major
+            pooled = embeds[:, self.class_tokens :].mean(dim=1)
+            rows = torch.cat([torch.tensor(part["ids"], device=device) for part in parts])
+            meta = fino_meta[rows.repeat_interleave(num_samples)]
+            fino_loss, self.fino_stats = self.fino_heads(pooled, meta, fino_gamma)
+            loss = loss + fino_loss
 
         if not with_state:
             return loss

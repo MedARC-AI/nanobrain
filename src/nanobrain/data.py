@@ -23,6 +23,8 @@ class Fomo300kDataset(Dataset):
         self.shards = members["shard"].tolist()
         self.offsets = members["offset"].to_numpy()
         self.sizes = members["size"].to_numpy()
+        # fino3d per-image metadata [N, 6] (nanobrain.fino.build_meta), None = off
+        self.meta = None
 
     def __len__(self) -> int:
         return len(self.paths)
@@ -41,6 +43,8 @@ class Fomo300kDataset(Dataset):
                 "shape": tuple(npz["shape"].tolist()),
                 "affine": npz["affine"],
             }
+        if self.meta is not None:
+            sample["fino"] = self.meta[index]
         return sample
 
 

@@ -36,6 +36,7 @@ from nanobrain.data import (
     reorient_to_ras,
     resample_to_spacing,
 )
+from nanobrain.fino import ramp as fino_ramp
 from nanobrain.model import ViTMAE3D, patches_to_volume
 from nanobrain.optim import CombinedOptimizer, Muon, is_muon_param
 from nanobrain.visualization import plot_mask_pred
@@ -120,6 +121,18 @@ def main(args: DictConfig):
         torch.backends.cuda.enable_mem_efficient_sdp(False)
         logger.info(f"flash attention impl: {current_flash_attention_impl()}")
 
+    fino_meta = None
+    if args.get("fino3d") and args.fino3d.enabled:
+        # metadata first: the group vocabulary sizes the heads (stored in the checkpoint args)
+        from nanobrain.fino import build_meta
+
+        assert args.native, "fino3d: native training only"
+        fino_meta = build_meta(
+            args.fino3d,
+            Path(args.train_filelist).read_text().split(),
+            DATA_ROOT / "fomo300k" / "tables" / "images.parquet",
+        )
+
     # model
     model = ViTMAE3D.from_config(args)
     model.decoder_prune_last = args.decoder_prune_last
@@ -163,6 +176,7 @@ def main(args: DictConfig):
     optimizer = make_optimizer(args, model_without_ddp)
 
     dataset = Fomo300kDataset(DATA_ROOT / "fomo300k", args.train_filelist)
+    dataset.meta = fino_meta
     logger.info(f"train dataset: {len(dataset)} images")
 
     if args.epochs:
@@ -413,6 +427,18 @@ def train(
 
         if args.cudagraphs:
             torch.compiler.cudagraph_mark_step_begin()
+        fino_kwargs = {}
+        if "fino" in batch:
+            # FINO's gamma ramp over training progress (the time schedule's clock when time keyed)
+            if time_schedule:
+                wall = prev_wall_time + time.monotonic() - start_time
+                progress = 0.0 if train_t0 is None else (wall - train_t0) / max(time_limit - train_t0, 1.0)
+            else:
+                progress = step / total_steps
+            fino_kwargs = {
+                "fino_meta": batch["fino"],
+                "fino_gamma": fino_ramp(args.fino3d.gamma_max, progress),
+            }
         with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=args.amp):
             loss = model(
                 images,
@@ -422,6 +448,7 @@ def train(
                 num_samples=args.num_samples,
                 with_state=False,
                 spacing=batch.get("spacing"),
+                **fino_kwargs,
             )
 
         # the cuda graph's output buffer is overwritten by the next replay
@@ -453,6 +480,10 @@ def train(
                 "tflop_per_sec": metric_logger.meters["tflop/s"].value,
                 "watts": metric_logger.meters["watts"].value,
             }
+            if fino_kwargs:
+                log_stats["fino_gamma"] = fino_kwargs["fino_gamma"]
+                for k, v in model_without_ddp.fino_stats.items():
+                    log_stats[f"fino_{k}"] = float(v)
             if misc.is_main_process():
                 with log_path.open("a") as f:
                     print(json.dumps(log_stats), file=f)
@@ -577,6 +608,7 @@ def make_lr_schedule(
 
 def make_batch_transform(args: DictConfig):
     def fn(batch: list[dict[str, Tensor]]) -> dict[str, Tensor]:
+        raw = batch
         batch = [
             sample_transform(
                 sample,
@@ -589,7 +621,10 @@ def make_batch_transform(args: DictConfig):
         ]
         if args.native:
             # each image on its own voxel grid
-            return {key: [sample[key] for sample in batch] for key in ("image", "mask", "spacing")}
+            out = {key: [sample[key] for sample in batch] for key in ("image", "mask", "spacing")}
+            if "fino" in raw[0]:
+                out["fino"] = torch.stack([sample["fino"] for sample in raw])
+            return out
         images = torch.stack([sample["image"] for sample in batch])
         masks = torch.stack([sample["mask"] for sample in batch])
         return {"image": images, "mask": masks}
