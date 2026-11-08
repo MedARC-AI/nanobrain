@@ -152,6 +152,19 @@ fino3d:
   bv_mean: null
   bv_std: null
 
+# natural-image pretrained init (nanobrain.natinit). operator ruling 2026-11-08: "natural image
+# model is ok" (README bans brain-MRI weights only; this is the operator's reading). path: local
+# safetensors dir (mae: facebook/vit-mae-base, dinov2: timm vit_base_patch14_dinov2.lvd142m).
+# embed: inflate the 2D patch embedding into NativeEmbed. block_lr_mult scales the lr of the
+# pretrained blocks + final norm (muon and adamw). pos_scale multiplies the random pos tables.
+# enabled false = the base run, bitwise
+natinit:
+  enabled: false
+  path: /data/ryan.kim/nanobrain/pretrained/facebook_vit-mae-base
+  embed: true
+  block_lr_mult: 1.0
+  pos_scale: 1.0
+
 wandb: false
 wandb_entity: null
 wandb_project: nanobrain

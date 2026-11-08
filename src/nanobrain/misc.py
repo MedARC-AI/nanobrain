@@ -418,7 +418,7 @@ def clip_grad(optimizer: Optimizer, max_norm: float | None = None) -> Tensor:
 
 
 # from dinov2 with some minor changes
-def get_param_groups(model, patch_embed_lr_mult=1.0, skip_names=()):
+def get_param_groups(model, patch_embed_lr_mult=1.0, skip_names=(), lr_mult_fn=None):
     # no lr decay, we could add this later if needed
     all_params = []
 
@@ -432,6 +432,8 @@ def get_param_groups(model, patch_embed_lr_mult=1.0, skip_names=()):
 
         if "patch_embed" in name:
             d["lr_multiplier"] = d["lr_multiplier"] * patch_embed_lr_mult
+        if lr_mult_fn is not None:
+            d["lr_multiplier"] = d["lr_multiplier"] * lr_mult_fn(name)
 
         all_params.append(d)
 

@@ -136,6 +136,12 @@ def main(args: DictConfig):
     # model
     model = ViTMAE3D.from_config(args)
     model.decoder_prune_last = args.decoder_prune_last
+    if args.get("natinit") and args.natinit.enabled:
+        # natural-image pretrained blocks (+ inflated patch embedding). a resumed checkpoint
+        # (misc.load_model below) overwrites this, as it should
+        from nanobrain.natinit import apply_natural_init
+
+        apply_natural_init(model, args.natinit)
     model.to(device)
     logger.info(f"model:\n{model}")
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -556,15 +562,32 @@ def make_optimizer(args: DictConfig, model: nn.Module):
         if is_muon_param(n, p, args.muon_encoder_only, args.muon_decoder_only, args.muon_all_matrices)
     ]
     logger.info(f"muon params: {len(muon_names)} matrices")
-    adamw_groups = misc.get_param_groups(model, skip_names=set(muon_names))
+    # natinit.block_lr_mult: lr multiplier of the pretrained encoder blocks + final norm
+    block_mult = 1.0
+    if args.get("natinit") and args.natinit.enabled:
+        block_mult = float(args.natinit.block_lr_mult)
+    from nanobrain.natinit import is_natinit_param
+
+    def lr_mult_fn(name):
+        return block_mult if is_natinit_param(name) else 1.0
+
+    adamw_groups = misc.get_param_groups(model, skip_names=set(muon_names), lr_mult_fn=lr_mult_fn)
     params = dict(model.named_parameters())
-    muon_groups = [
-        {
-            "params": [params[n] for n in muon_names],
-            "lr_multiplier": args.muon_lr_mult,
-            "wd_multiplier": 1.0,
-        }
-    ]
+    muon_groups = []
+    for mult in sorted({lr_mult_fn(n) for n in muon_names}):
+        muon_groups.append(
+            {
+                "params": [params[n] for n in muon_names if lr_mult_fn(n) == mult],
+                "lr_multiplier": args.muon_lr_mult * mult,
+                "wd_multiplier": 1.0,
+            }
+        )
+    if block_mult != 1.0:
+        logger.info(
+            f"natinit block_lr_mult {block_mult}: muon groups "
+            f"{[(len(g['params']), g['lr_multiplier']) for g in muon_groups]}, adamw groups "
+            f"{[(len(g['params']), g['lr_multiplier']) for g in adamw_groups]}"
+        )
     for groups in (adamw_groups, muon_groups):
         misc.update_lr(groups, args.lr)
         misc.update_wd(groups, args.weight_decay)
