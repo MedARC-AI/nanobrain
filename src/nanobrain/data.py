@@ -44,7 +44,8 @@ class Fomo300kDataset(Dataset):
                 "affine": npz["affine"],
             }
         if self.meta is not None:
-            sample["fino"] = self.meta[index]
+            # numpy, so send_data leaves it on the cpu (no per-step host <-> device sync)
+            sample["fino"] = self.meta[index].numpy()
         return sample
 
 

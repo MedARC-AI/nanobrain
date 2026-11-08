@@ -623,7 +623,7 @@ def make_batch_transform(args: DictConfig):
             # each image on its own voxel grid
             out = {key: [sample[key] for sample in batch] for key in ("image", "mask", "spacing")}
             if "fino" in raw[0]:
-                out["fino"] = torch.stack([sample["fino"] for sample in raw])
+                out["fino"] = torch.from_numpy(np.stack([sample["fino"] for sample in raw]))
             return out
         images = torch.stack([sample["image"] for sample in batch])
         masks = torch.stack([sample["mask"] for sample in batch])

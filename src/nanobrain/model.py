@@ -639,8 +639,11 @@ class ViTMAE3D(nn.Module):
             # the global embedding of each sequence: mean of its visible encoder tokens (eval:
             # mean of all brain-touching tokens); rows are part by part, image-major
             pooled = embeds[:, self.class_tokens :].mean(dim=1)
-            rows = torch.cat([torch.tensor(part["ids"], device=device) for part in parts])
-            meta = fino_meta[rows.repeat_interleave(num_samples)]
+            # fino_meta stays on the cpu: one pinned non blocking copy, no sync with the gpu queue
+            rows = torch.tensor([ii for part in parts for ii in part["ids"]]).repeat_interleave(num_samples)
+            meta = fino_meta.cpu()[rows]
+            if device.type == "cuda":
+                meta = meta.pin_memory().to(device, non_blocking=True)
             fino_loss, self.fino_stats = self.fino_heads(pooled, meta, fino_gamma)
             loss = loss + fino_loss
 
