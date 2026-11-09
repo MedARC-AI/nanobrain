@@ -163,6 +163,8 @@ natinit:
   path: /data/ryan.kim/nanobrain/pretrained/facebook_vit-mae-base
   embed: true
   block_lr_mult: 1.0
+  # layer-wise lr decay over the pretrained blocks: block i gets block_lr_mult * layer_decay ** (depth - 1 - i)
+  layer_decay: 1.0
   pos_scale: 1.0
 
 wandb: false

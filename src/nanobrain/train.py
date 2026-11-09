@@ -562,14 +562,21 @@ def make_optimizer(args: DictConfig, model: nn.Module):
         if is_muon_param(n, p, args.muon_encoder_only, args.muon_decoder_only, args.muon_all_matrices)
     ]
     logger.info(f"muon params: {len(muon_names)} matrices")
-    # natinit.block_lr_mult: lr multiplier of the pretrained encoder blocks + final norm
-    block_mult = 1.0
+    # natinit.block_lr_mult: lr multiplier of the pretrained encoder blocks + final norm.
+    # natinit.layer_decay: layer-wise lr decay on top (block i of depth d gets
+    # block_lr_mult * layer_decay ** (d - 1 - i); the final norm keeps block_lr_mult). 1.0 = off
+    block_mult, layer_decay, depth = 1.0, 1.0, len(model.blocks)
     if args.get("natinit") and args.natinit.enabled:
         block_mult = float(args.natinit.block_lr_mult)
+        layer_decay = float(args.natinit.get("layer_decay", 1.0))
     from nanobrain.natinit import is_natinit_param
 
     def lr_mult_fn(name):
-        return block_mult if is_natinit_param(name) else 1.0
+        if not is_natinit_param(name):
+            return 1.0
+        if name.startswith("blocks."):
+            return block_mult * layer_decay ** (depth - 1 - int(name.split(".")[1]))
+        return block_mult
 
     adamw_groups = misc.get_param_groups(model, skip_names=set(muon_names), lr_mult_fn=lr_mult_fn)
     params = dict(model.named_parameters())
@@ -582,9 +589,9 @@ def make_optimizer(args: DictConfig, model: nn.Module):
                 "wd_multiplier": 1.0,
             }
         )
-    if block_mult != 1.0:
+    if block_mult != 1.0 or layer_decay != 1.0:
         logger.info(
-            f"natinit block_lr_mult {block_mult}: muon groups "
+            f"natinit block_lr_mult {block_mult} layer_decay {layer_decay}: muon groups "
             f"{[(len(g['params']), g['lr_multiplier']) for g in muon_groups]}, adamw groups "
             f"{[(len(g['params']), g['lr_multiplier']) for g in adamw_groups]}"
         )
