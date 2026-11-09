@@ -187,7 +187,7 @@ css = [
 [[package]]
 name = "brainmarks-smri"
 version = "0.1.0"
-source = { git = "https://github.com/MedARC-AI/brainmarks-smri.git?rev=8ef7115d519a1d1f13910c1e13bcae331b0ca3ad#8ef7115d519a1d1f13910c1e13bcae331b0ca3ad" }
+source = { git = "https://github.com/MedARC-AI/brainmarks-smri.git?rev=d1eef0e91a7da5ce62aab15d1e7f437d89555d4b#d1eef0e91a7da5ce62aab15d1e7f437d89555d4b" }
 dependencies = [
     { name = "dcm2niix" },
     { name = "einops" },
@@ -1662,7 +1662,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "brainmarks-smri", git = "https://github.com/MedARC-AI/brainmarks-smri.git?rev=8ef7115d519a1d1f13910c1e13bcae331b0ca3ad" },
+    { name = "brainmarks-smri", git = "https://github.com/MedARC-AI/brainmarks-smri.git?rev=d1eef0e91a7da5ce62aab15d1e7f437d89555d4b" },
     { name = "einops" },
     { name = "jaxtyping" },
     { name = "matplotlib" },
