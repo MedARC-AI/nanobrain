@@ -41,7 +41,7 @@ total_steps: 22500
 warmup_steps: 6750
 decay_steps: 0
 epochs: 3.5
-warmup_epochs: 0.77
+warmup_epochs: 0.3
 decay_epochs: 0.7
 time_schedule: true
 time_decay_frac: 0.2
@@ -101,6 +101,13 @@ fino3d:
   age_std: null
   bv_mean: null
   bv_std: null
+natinit:
+  enabled: true
+  path: /data/ryan.kim/nanobrain/pretrained/facebook_vit-mae-base
+  embed: true
+  block_lr_mult: 0.3
+  layer_decay: 1.0
+  pos_scale: 1.0
 wandb: false
 wandb_entity: null
 wandb_project: nanobrain-climb
