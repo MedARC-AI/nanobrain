@@ -76,8 +76,20 @@ class ViTMAE3D(nn.Module):
         # fino3d config block (nanobrain.fino), training only heads on the global embedding;
         # None = off (no params, same init)
         fino3d: dict | None = None,
+        # cross-subject replaced-token detection (ELECTRA / CIM RevDet, with REAL replacements):
+        # in native training a rtd_ratio share of each sequence's visible patches is swapped for
+        # the patch at the same token coordinate of another image of its spacing group, quantile
+        # matched (rtd_quantiles levels) to the host image's in-brain intensities; a zero-init
+        # linear head on the visible encoder tokens detects them (BCE, weight rtd_weight; 0 = off).
+        # the MAE targets stay the clean host patches. training only
+        rtd_weight: float = 0.0,
+        rtd_ratio: float = 0.15,
+        rtd_quantiles: int = 32,
     ):
         super().__init__()
+        self.rtd_weight = float(rtd_weight)
+        self.rtd_ratio = float(rtd_ratio)
+        self.rtd_quantiles = int(rtd_quantiles)
         self.norm_target = norm_target
         self.grad_loss_weight = float(grad_loss_weight)
         self.fg_loss_weight = float(fg_loss_weight)
@@ -177,6 +189,65 @@ class ViTMAE3D(nn.Module):
             assert native, "fino3d: native training only"
             self.fino_heads = FinoHeads(embed_dim, fino3d)
             self.fino_heads.apply(_init_weights)
+        # built last, so every other parameter is initialized as with rtd off
+        self.rtd_head = None
+        self.rtd_stats = {}
+        if self.rtd_weight > 0.0:
+            assert native, "rtd: native training only"
+            self.rtd_head = nn.Linear(embed_dim, 1)
+            nn.init.zeros_(self.rtd_head.weight)
+            nn.init.zeros_(self.rtd_head.bias)
+
+    @torch.no_grad()
+    def rtd_replace(
+        self, vis_patches: Tensor, vis_mask: Tensor, order: Tensor, vols: Tensor, b: int, num: int,
+        num_samples: int, num_visible: int,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Swap a rtd_ratio share of the visible patches of every row for the patch at the same
+        token coordinate of the next image of the group (rolled by one), quantile matched to the
+        host row's in-brain voxels. Returns (patches, mask, replaced [rows, num_visible] bool)."""
+        rows = b * num_samples
+        vis_order = order[:, :num_visible]  # [rows, V], token ids of the host
+        partner_img = (torch.arange(b, device=order.device) + 1) % b
+        partner_img = partner_img.repeat_interleave(num_samples)  # [rows]
+        flat = vis_order + (partner_img * num)[:, None]
+        p_patches = vols[0].flatten(0, 1).index_select(0, flat.flatten()).view_as(vis_patches)
+        p_mask = vols[1].flatten(0, 1).index_select(0, flat.flatten()).view_as(vis_patches)
+        # the partner patch must be brain tissue too (half its voxels in its brain mask)
+        ok = p_mask.float().mean(-1) >= 0.5
+        replaced = (torch.rand(vis_order.shape, device=order.device) < self.rtd_ratio) & ok
+        # per-row in-brain quantiles of the host's visible patches and of the partner image's
+        # visible patches in its own row (row of image j+1, same sample index)
+        nq = self.rtd_quantiles + 1
+        qs = torch.linspace(0, 1, nq, device=order.device)
+
+        def row_quantiles(x: Tensor, m: Tensor) -> Tensor:
+            x = x.float().flatten(1)
+            m = m.flatten(1) > 0.5
+            cnt = m.sum(1).clamp_min(1)
+            srt = torch.where(m, x, torch.full_like(x, float("inf"))).sort(dim=1).values
+            idx = (qs[None] * (cnt[:, None] - 1).float()).round().long()
+            q = srt.gather(1, idx)
+            q = torch.where(torch.isfinite(q), q, torch.zeros_like(q))
+            # strictly increasing for the interpolation
+            return q + 1e-5 * torch.arange(nq, device=x.device)[None]
+
+        q_host = row_quantiles(vis_patches, vis_mask)
+        row_of = torch.arange(rows, device=order.device)
+        partner_row = (row_of // num_samples + 1) % b * num_samples + row_of % num_samples
+        q_part = q_host[partner_row]
+        x = p_patches.float().flatten(1)
+        pos = torch.searchsorted(q_part.contiguous(), x.contiguous()).clamp(1, nq - 1)
+        lo, hi = q_part.gather(1, pos - 1), q_part.gather(1, pos)
+        t = ((x - lo) / (hi - lo)).clamp(0, 1)
+        mapped = q_host.gather(1, pos - 1) + t * (q_host.gather(1, pos) - q_host.gather(1, pos - 1))
+        mapped = mapped.view_as(p_patches).to(vis_patches.dtype)
+        sel = replaced[..., None]
+        return (
+            torch.where(sel, mapped, vis_patches),
+            torch.where(sel, p_mask, vis_mask),
+            replaced,
+        )
 
     @classmethod
     def from_config(cls, args: dict) -> "ViTMAE3D":
@@ -560,10 +631,20 @@ class ViTMAE3D(nn.Module):
             coord = geoms[sp][3][0][order]
             vis_patches, part["target_patches"] = patches.split([num_visible, num_predict], 1)
             part["target_mask_patches"] = mask_patches[:, num_visible:]
+            vis_mask = mask_patches[:, :num_visible]
+            if self.rtd_head is not None and self.training:
+                if b >= 2:
+                    vis_patches, vis_mask, part["rtd_label"] = self.rtd_replace(
+                        vis_patches, vis_mask, order, vols, b, num, num_samples, num_visible
+                    )
+                else:
+                    part["rtd_label"] = torch.zeros(
+                        vis_patches.shape[:2], dtype=torch.bool, device=device
+                    )
             part["vis_coord"], part["target_coord"] = coord.split([num_visible, num_predict], 1)
             part["embeds"] = self.patch_embed.native(vis_patches, sp, patch, embed_ws.get(sp))
             if self.level_head is not None:
-                part["vis_patches"], part["vis_mask"] = vis_patches, mask_patches[:, :num_visible]
+                part["vis_patches"], part["vis_mask"] = vis_patches, vis_mask
 
         def cat(key: str) -> Tensor:
             # contiguous for one group too, the compiled encoder would recompile on view strides
@@ -646,6 +727,17 @@ class ViTMAE3D(nn.Module):
                 meta = meta.pin_memory().to(device, non_blocking=True)
             fino_loss, self.fino_stats = self.fino_heads(pooled, meta, fino_gamma)
             loss = loss + fino_loss
+        if self.rtd_head is not None and self.training and "rtd_label" in parts[0]:
+            labels = cat("rtd_label").float()
+            logits = self.rtd_head(embeds[:, self.class_tokens :]).squeeze(-1).float()
+            rtd_loss = F.binary_cross_entropy_with_logits(logits, labels)
+            loss = loss + self.rtd_weight * rtd_loss
+            with torch.no_grad():
+                pos = labels > 0.5
+                acc_pos = ((logits > 0) & pos).sum() / pos.sum().clamp_min(1)
+                acc_neg = ((logits <= 0) & ~pos).sum() / (~pos).sum().clamp_min(1)
+            self.rtd_stats = {"rtd_loss": rtd_loss.detach(), "rtd_tpr": acc_pos, "rtd_tnr": acc_neg}
+            self.fino_stats = {**self.fino_stats, **self.rtd_stats}
 
         if not with_state:
             return loss

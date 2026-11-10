@@ -34,6 +34,11 @@ model_kwargs:
   drop_path_rate: 0.0
   min_mask_frac: 0.05
   level_weight: 0.5
+  # cross-subject replaced-token detection (model.py rtd_replace): share of visible patches
+  # swapped for quantile-matched same-coordinate patches of another image, BCE head weight
+  rtd_weight: 0.1
+  rtd_ratio: 0.15
+  rtd_quantiles: 32
 batch_size: 32
 accum_iter: 1
 base_lr: 0.002
