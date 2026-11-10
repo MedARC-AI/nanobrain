@@ -240,6 +240,15 @@ def main(args: DictConfig):
         late_indices=late_indices,
         switch_at=switch_at,
     )
+    if args.get("subject_temper"):
+        from nanobrain.data import subject_temper_weights
+
+        sampler.weights = subject_temper_weights(dataset.paths, float(args.subject_temper))
+        n_eff = sampler.weights.sum() ** 2 / sampler.weights.pow(2).sum()
+        logger.info(
+            f"subject tempered sampling: alpha {args.subject_temper}, "
+            f"effective images {n_eff:.0f} of {len(dataset)}"
+        )
     fast_prep = not args.native
     train_loader = DataLoader(
         dataset,

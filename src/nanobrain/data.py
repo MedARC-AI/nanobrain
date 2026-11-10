@@ -49,6 +49,23 @@ class Fomo300kDataset(Dataset):
         return sample
 
 
+def subject_temper_weights(paths: list[str], alpha: float) -> torch.Tensor:
+    """Per-image sampling weights n_subject^(-alpha), so a subject with n scans is drawn with total
+    mass n^(1-alpha): alpha 0 = uniform over images, 1 = uniform over subjects. The subject key is
+    the collection / sub-* part of the path (derivatives/<collection>/<sub>/...)."""
+    keys = []
+    for path in paths:
+        # up to the first sub-* segment (OpenNeuro nests a dsXXXXXX level before it)
+        parts = path.split("/")
+        cut = next((ii for ii, part in enumerate(parts) if part.startswith("sub")), 2)
+        keys.append("/".join(parts[: cut + 1]))
+    counts: dict[str, int] = {}
+    for key in keys:
+        counts[key] = counts.get(key, 0) + 1
+    n = torch.tensor([counts[key] for key in keys], dtype=torch.float64)
+    return n.pow(-alpha)
+
+
 class InfiniteSampler(Sampler[int]):
     """Endless shuffled passes over the dataset, starting from sample index `start`. With ddp
     each rank takes every world_size-th sample of the same stream."""
@@ -71,12 +88,22 @@ class InfiniteSampler(Sampler[int]):
         # from sample index switch_at on, endless shuffled passes over late_indices only (anneal mix)
         self.late_indices = late_indices
         self.switch_at = switch_at if late_indices is not None else None
+        # optional per-image sampling weights (subject tempering): passes of num_samples draws
+        # with replacement instead of permutations (None = uniform permutations, the default)
+        self.weights = None
+
+    def _pass(self, generator):
+        if self.weights is None:
+            return torch.randperm(self.num_samples, generator=generator).tolist()
+        return torch.multinomial(
+            self.weights, self.num_samples, replacement=True, generator=generator
+        ).tolist()
 
     def __iter__(self):
         generator = torch.Generator().manual_seed(self.seed)
         index = 0
         while self.switch_at is None or index < self.switch_at:
-            for sample_index in torch.randperm(self.num_samples, generator=generator).tolist():
+            for sample_index in self._pass(generator):
                 if self.switch_at is not None and index >= self.switch_at:
                     break
                 if index >= self.start and index % self.world_size == self.rank:

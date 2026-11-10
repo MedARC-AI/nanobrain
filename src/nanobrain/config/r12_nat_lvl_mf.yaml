@@ -3,6 +3,9 @@ notes: native + min_mask_frac 0.05 + level-set head 0.5 on the full qc set (3.50
 output_dir: output
 train_filelist: src/nanobrain/config/fomo300k_images_qc.txt
 anneal_filelist: null
+# subject-tempered sampling: draw image i with probability ~ n_subject(i)^-alpha (0 = uniform
+# over images, 1 = uniform over subjects); 75% of the qc list sits in subjects with >20 scans
+subject_temper: 0.5
 num_workers: 16
 prefetch_factor: 4
 prep_threads: 3
