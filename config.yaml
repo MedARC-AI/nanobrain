@@ -1,11 +1,11 @@
-name: r12_nat_lvl_mf
-notes: native + min_mask_frac 0.05 + level-set head 0.5 on the full qc set (3.50 epochs)
-output_dir: /data/mihir.neal/nanobrain_climb2/runs/r12_nat_lvl_mf
+name: screen_s2_a0
+notes: cross-subject replaced-token detection aux on subject-tempered sampling (n0012) on natinit MAE-B root
+output_dir: /data/ryan.kim/nanobrain/runs/lpb8e14e/n0103/screen_s2_a0
 train_filelist: src/nanobrain/config/fomo300k_images_qc.txt
 anneal_filelist: null
 num_workers: 16
 prefetch_factor: 4
-prep_threads: 2
+prep_threads: 3
 prep_lean: false
 clip_quantiles:
 - 0.005
@@ -31,18 +31,23 @@ model_kwargs:
   drop_path_rate: 0.0
   min_mask_frac: 0.05
   level_weight: 0.5
+  rtd_weight: 0.1
+  rtd_ratio: 0.15
+  rtd_quantiles: 32
 batch_size: 32
 accum_iter: 1
 base_lr: 0.002
 lr: null
 min_lr: 1.0e-06
-time_limit: null
+time_limit: 59.5
 total_steps: 22500
 warmup_steps: 6750
 decay_steps: 0
 epochs: 3.5
-warmup_epochs: 0.77
+warmup_epochs: 0.3
 decay_epochs: 0.7
+time_schedule: true
+time_decay_frac: 0.2
 weight_decay: 0.05
 betas:
 - 0.9
@@ -59,11 +64,11 @@ muon_fused: true
 amp: true
 amp_dtype: bfloat16
 compile: true
-gc_freeze: false
+gc_freeze: true
 cudagraphs: false
-fast_startup: false
-high_priority_stream: false
-decoder_prune_last: false
+fast_startup: true
+high_priority_stream: true
+decoder_prune_last: true
 flash_attention_impl: FA3
 ckpt: null
 resume: false
@@ -77,8 +82,36 @@ plot_ncol: 2
 plot_num_predict: null
 device: cuda
 distributed: false
-seed: 7338
+seed: 2
 debug: false
-wandb: true
+fino3d:
+  enabled: true
+  weight: 0.03
+  gamma_max: 0.7
+  hidden: 256
+  age: 3.0
+  sex: 0
+  group: 0
+  field_strength: 0.0
+  manufacturer: 0.0
+  nuisance_mode: predict
+  brain_volume: 0.0
+  group_min_count: 300
+  exclude_collections:
+  - PT030_OpenNeuro/ds001510
+  group_classes: null
+  age_mean: null
+  age_std: null
+  bv_mean: null
+  bv_std: null
+natinit:
+  enabled: true
+  path: /data/ryan.kim/nanobrain/pretrained/facebook_vit-mae-base
+  embed: true
+  block_lr_mult: 0.3
+  layer_decay: 1.0
+  pos_scale: 1.0
+wandb: false
 wandb_entity: null
 wandb_project: nanobrain-climb
+subject_temper: 0.5
