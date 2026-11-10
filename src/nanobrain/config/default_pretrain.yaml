@@ -9,14 +9,25 @@ output_dir: output
 
 # Data.
 train_filelist: src/nanobrain/config/fomo300k_images.txt
+# optional subset of train_filelist that the lr decay phase draws from (null = off)
+anneal_filelist: null
 num_workers: 8
 prefetch_factor: 2
+# gpu prep of the next batches in background threads on side streams (same math, ~21% faster
+# ViT-B steps). 0 = prep in the loop
+prep_threads: 2
+# same prep values with less work: masks decoded and bit packed in the loader workers, 2 tensors
+# per batch through the loader, fewer gpu kernels (prep.sample_transform_into)
+prep_lean: false
 clip_quantiles: [0.005, 0.995]
 
 # Fixed 1mm grid that all images are fit to.
 grid_size: [192, 240, 192]
 target_spacing: 1.0
 patch_size: 8
+# No resampling: each image keeps its voxel grid inside the grid_size mm box, with patches of
+# max(1, round(patch_size / spacing)) voxels per axis (~patch_size mm). Evals stay at 1 mm.
+native: false
 
 # Sequence sampling. ~3200 brain mask patches per image on average, so num_visible 640 is a
 # ~0.8 mask ratio.
@@ -71,6 +82,17 @@ muon_fused: false
 amp: true
 amp_dtype: bfloat16
 compile: true
+# speed only, same math: gc.freeze() after the first step
+gc_freeze: false
+# speed only, same math: encoder / decoder / loss fwd + bwd as cuda graphs (single gpu, not native)
+cudagraphs: false
+# speed only: source snapshot in a background thread
+fast_startup: false
+# speed only: training loop on a high priority cuda stream (prep threads stay at priority 0)
+high_priority_stream: false
+# speed, same math: the last decoder block computes only the mask token rows the head reads
+# (~3% fewer flops at bs32 np768)
+decoder_prune_last: false
 # sdpa flash backend, e.g. FA3 (null = torch default)
 flash_attention_impl: null
 

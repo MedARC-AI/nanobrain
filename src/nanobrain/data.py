@@ -49,21 +49,39 @@ class InfiniteSampler(Sampler[int]):
     each rank takes every world_size-th sample of the same stream."""
 
     def __init__(
-        self, num_samples: int, seed: int = 0, start: int = 0, rank: int = 0, world_size: int = 1
+        self,
+        num_samples: int,
+        seed: int = 0,
+        start: int = 0,
+        rank: int = 0,
+        world_size: int = 1,
+        late_indices: list[int] | None = None,
+        switch_at: int | None = None,
     ):
         self.num_samples = num_samples
         self.seed = seed
         self.start = start
         self.rank = rank
         self.world_size = world_size
+        # from sample index switch_at on, endless shuffled passes over late_indices only (anneal mix)
+        self.late_indices = late_indices
+        self.switch_at = switch_at if late_indices is not None else None
 
     def __iter__(self):
         generator = torch.Generator().manual_seed(self.seed)
         index = 0
-        while True:
+        while self.switch_at is None or index < self.switch_at:
             for sample_index in torch.randperm(self.num_samples, generator=generator).tolist():
+                if self.switch_at is not None and index >= self.switch_at:
+                    break
                 if index >= self.start and index % self.world_size == self.rank:
                     yield sample_index
+                index += 1
+        late_generator = torch.Generator().manual_seed(self.seed + 1)
+        while True:
+            for ii in torch.randperm(len(self.late_indices), generator=late_generator).tolist():
+                if index >= self.start and index % self.world_size == self.rank:
+                    yield self.late_indices[ii]
                 index += 1
 
 
@@ -105,6 +123,26 @@ def reorient_to_ras(
     image = image.flip(flip_axes).permute(order)
     mask = mask.flip(flip_axes).permute(order)
     return image, mask, new_affine
+
+
+def native_spacing(affine: np.ndarray, target_spacing: float = 1.0) -> tuple[float, float, float]:
+    # voxel size per axis. header float noise around target_spacing snaps to it, the rest rounds to
+    # 1e-4 mm so scans from one protocol share a spacing
+    spacing = np.linalg.norm(affine[:3, :3], axis=0)
+    return tuple(
+        target_spacing if abs(sp - target_spacing) < 1e-3 else round(float(sp), 4) for sp in spacing
+    )
+
+
+def native_box(
+    spacing: tuple[float, float, float], box_mm: tuple[int, int, int]
+) -> tuple[int, int, int]:
+    # the box_mm box in voxels of this spacing, rounded up unless whole up to float noise
+    shape = []
+    for mm, sp in zip(box_mm, spacing):
+        size = mm / sp
+        shape.append(round(size) if abs(size - round(size)) < 1e-2 else math.ceil(size))
+    return tuple(shape)
 
 
 def resample_to_spacing(
