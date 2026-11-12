@@ -27,19 +27,20 @@ The target metric is the [brainmarks-smri](https://github.com/MedARC-AI/brainmar
 
 | # | Name | open | classification | age | segmentation |
 |---|---|---:|---:|---:|---:|
-| 1 | [Walnut](https://github.com/MedARC-AI/walnut-fomo26) | 0.556 | 0.332 | 0.923 | 0.760 |
-| 2 | [nnFoundation ViT](https://huggingface.co/MIC-DKFZ/nnFoundationViT) | 0.492 | 0.283 | 0.841 | 0.678 |
-| 3 | [Neuro-JEPA](https://github.com/NYUMedML/Neuro-JEPA) | 0.477 | 0.325 | 0.886 | 0.510 |
-| 4 | [NeuroVFM](https://github.com/MLNeurosurg/neurovfm) | 0.468 | 0.317 | 0.881 | 0.495 |
-| 5 | [OpenMind SimCLR](https://huggingface.co/MIC-DKFZ/ResEncL-OpenMind-SimCLR) | 0.458 | 0.305 | 0.818 | 0.523 |
-| 6 | [BrainDINO](https://github.com/mclwu22/BrainDINO) | 0.439 | 0.287 | 0.791 | 0.508 |
-| 7 | [DINOv3](https://github.com/facebookresearch/dinov3) | 0.429 | 0.290 | 0.761 | 0.485 |
-| 8 | [Handcrafted](https://github.com/MedARC-AI/brainmarks-smri/blob/d1eef0e91a7da5ce62aab15d1e7f437d89555d4b/src/brainmarks_smri/models/handcrafted.py) | 0.406 | 0.235 | 0.799 | 0.485 |
-| 9 | [VoCo](https://github.com/Luffy03/VoCo) | 0.402 | 0.260 | 0.720 | 0.473 |
-| 10 | [AMAES](https://github.com/asbjrnmunk/amaes) | 0.375 | 0.219 | 0.591 | 0.545 |
-| 11 | [BrainIAC](https://github.com/AIM-KannLab/BrainIAC) | 0.329 | 0.176 | 0.579 | 0.471 |
+| 1 | [Walnut](https://labless.dev/runs/run_sub_3b6f4d9185) | 0.580 | 0.343 | 0.958 | 0.801 |
+| 2 | [Walnut 0.1](https://github.com/MedARC-AI/walnut-fomo26) | 0.556 | 0.332 | 0.923 | 0.760 |
+| 3 | [nnFoundation ViT](https://huggingface.co/MIC-DKFZ/nnFoundationViT) | 0.492 | 0.283 | 0.841 | 0.678 |
+| 4 | [Neuro-JEPA](https://github.com/NYUMedML/Neuro-JEPA) | 0.477 | 0.325 | 0.886 | 0.510 |
+| 5 | [NeuroVFM](https://github.com/MLNeurosurg/neurovfm) | 0.468 | 0.317 | 0.881 | 0.495 |
+| 6 | [OpenMind SimCLR](https://huggingface.co/MIC-DKFZ/ResEncL-OpenMind-SimCLR) | 0.458 | 0.305 | 0.818 | 0.523 |
+| 7 | [BrainDINO](https://github.com/mclwu22/BrainDINO) | 0.439 | 0.287 | 0.791 | 0.508 |
+| 8 | [DINOv3](https://github.com/facebookresearch/dinov3) | 0.429 | 0.290 | 0.761 | 0.485 |
+| 9 | [Handcrafted](https://github.com/MedARC-AI/brainmarks-smri/blob/d1eef0e91a7da5ce62aab15d1e7f437d89555d4b/src/brainmarks_smri/models/handcrafted.py) | 0.406 | 0.235 | 0.799 | 0.485 |
+| 10 | [VoCo](https://github.com/Luffy03/VoCo) | 0.402 | 0.260 | 0.720 | 0.473 |
+| 11 | [AMAES](https://github.com/asbjrnmunk/amaes) | 0.375 | 0.219 | 0.591 | 0.545 |
+| 12 | [BrainIAC](https://github.com/AIM-KannLab/BrainIAC) | 0.329 | 0.176 | 0.579 | 0.471 |
 
-Baselines are frozen pretrained models from [brainmarks-smri](https://github.com/MedARC-AI/brainmarks-smri), scored with the same probes.
+Baselines are frozen reference models scored with the same [brainmarks-smri](https://github.com/MedARC-AI/brainmarks-smri) probes. Walnut trained for ~15 hours on 8×H100, outside the leaderboard budget.
 
 ## Rules
 
