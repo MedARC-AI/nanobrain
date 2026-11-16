@@ -16,10 +16,12 @@ A collaborative (or competitive) challenge to find the best recipe for training 
 
 | # | Name | open | classification | age | segmentation | Contributors |
 |---|---|---:|---:|---:|---:|---|
-| 1 | [screen_s2_a0](https://github.com/MedARC-AI/nanobrain/tree/valid/screen_s2_a0) | 0.556 | 0.327 | 0.945 | 0.755 | [@RyanKim17920](https://github.com/RyanKim17920) |
-| 2 | [r12_nat_lvl_mf](https://github.com/MedARC-AI/nanobrain/tree/valid/r12_nat_lvl_mf) | 0.529 | 0.309 | 0.863 | 0.747 | [@mihirneal](https://github.com/mihirneal) |
-| 3 | [hp1hr-lr1.5e-3-s0](https://github.com/MedARC-AI/nanobrain/tree/valid/hp1hr-lr1.5e-3-s0) | 0.508 | 0.299 | 0.858 | 0.694 | [@clane9](https://github.com/clane9) |
-| 4 | [baseline](https://github.com/MedARC-AI/nanobrain/tree/ac1c1d8c04a6079dac666d07fdf846e36031e06a) | 0.475 | 0.260 | 0.836 | 0.667 | [@clane9](https://github.com/clane9) |
+| 1 | [s-fast6_s2026](https://github.com/MedARC-AI/nanobrain/tree/valid/s-fast6_s2026) | 0.589 | 0.369 | 0.952 | 0.787 | [@RyanKim17920](https://github.com/RyanKim17920) |
+| 2 | [final-f4_s2](https://github.com/MedARC-AI/nanobrain/tree/valid/final-f4_s2) | 0.571 | 0.344 | 0.941 | 0.778 | [@RyanKim17920](https://github.com/RyanKim17920), [@mihirneal](https://github.com/mihirneal) |
+| 3 | [screen_s2_a0](https://github.com/MedARC-AI/nanobrain/tree/valid/screen_s2_a0) | 0.556 | 0.327 | 0.945 | 0.755 | [@RyanKim17920](https://github.com/RyanKim17920) |
+| 4 | [r12_nat_lvl_mf](https://github.com/MedARC-AI/nanobrain/tree/valid/r12_nat_lvl_mf) | 0.529 | 0.309 | 0.863 | 0.747 | [@mihirneal](https://github.com/mihirneal) |
+| 5 | [hp1hr-lr1.5e-3-s0](https://github.com/MedARC-AI/nanobrain/tree/valid/hp1hr-lr1.5e-3-s0) | 0.508 | 0.299 | 0.858 | 0.694 | [@clane9](https://github.com/clane9) |
+| 6 | [baseline](https://github.com/MedARC-AI/nanobrain/tree/ac1c1d8c04a6079dac666d07fdf846e36031e06a) | 0.475 | 0.260 | 0.836 | 0.667 | [@clane9](https://github.com/clane9) |
 
 The target metric is the [brainmarks-smri](https://github.com/MedARC-AI/brainmarks-smri) `open` score, which is the mean over 11 tasks from 9 public MRI benchmark datasets. Sub-scores are means over each task type. Metrics are normalized so that 0 is ~chance and 1 is perfect: classification (2 AUROC - 1), age (R²) and segmentation (Dice). Scores are the median of 3 training seeds.
 
